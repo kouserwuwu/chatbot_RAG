@@ -1,5 +1,12 @@
+# 虚拟环境
 venv/
+# 环境变量
 .env
-_pycache_
+# Python 缓存
+__pycache__/
+*.pyc
+# 你自定义的忽略项
 Agent*
 claude.md
+# 向量数据库目录
+chroma_db/
