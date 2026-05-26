@@ -46,7 +46,7 @@ class RAGEngine:
         self._initialize_db()
 
     def _initialize_db(self) -> None:
-        """扫描知识库目录，加载文档并建立索引。"""
+        """扫描知识库目录，加载文档并建立索引。重载时会先清空旧索引。"""
         if not self.knowledge_dir.exists():
             self.logger.warning("知识库目录不存在: %s，将被创建", self.knowledge_dir)
             self.knowledge_dir.mkdir(parents=True, exist_ok=True)
@@ -57,13 +57,25 @@ class RAGEngine:
             return
 
         all_docs = []
+        # 尝试多种编码顺序
+        encodings = ["utf-8", "gbk", "gb2312", "latin-1"]
         for file in files:
             file_path = self.knowledge_dir / file
-            try:
-                loader = TextLoader(str(file_path), encoding="utf-8")
-                docs = loader.load()
-            except Exception as e:
-                self.logger.error("加载文档失败: %s, 错误: %s", file_path, e)
+            loaded = False
+            for enc in encodings:
+                try:
+                    loader = TextLoader(str(file_path), encoding=enc)
+                    docs = loader.load()
+                    loaded = True
+                    break
+                except (UnicodeDecodeError, RuntimeError):
+                    # RuntimeError: TextLoader 在编码错误时也抛 RuntimeError
+                    continue
+                except Exception as e:
+                    self.logger.error("加载文档失败: %s, 错误: %s", file_path, e)
+                    break
+            if not loaded:
+                self.logger.warning("跳过 %s：所有编码均无法解码", file)
                 continue
 
             text_splitter = CharacterTextSplitter(
@@ -78,6 +90,13 @@ class RAGEngine:
             return
 
         try:
+            # 重建索引前先删除旧 collection（避免历史和当前数据混合）
+            if self.vector_db is not None:
+                try:
+                    self.vector_db.delete_collection()
+                except Exception:
+                    pass
+
             self.vector_db = Chroma.from_documents(
                 documents=all_docs,
                 embedding=self.embeddings,

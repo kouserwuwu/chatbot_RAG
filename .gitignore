@@ -21,6 +21,14 @@ Agent*
 CLAUDE.md
 ~$*
 
+# 测试覆盖率
+.coverage
+htmlcov/
+
+# Python 打包产物
+dist/
+build/
+
 # IDE
 .idea/
 .vscode/

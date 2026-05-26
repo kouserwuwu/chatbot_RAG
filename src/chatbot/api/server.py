@@ -1,7 +1,8 @@
-import uuid
+from pathlib import Path
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from chatbot.core.session_manager import SessionManager
@@ -21,6 +22,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 静态文件挂载（Web 聊天界面）
+static_dir = Path(__file__).resolve().parent.parent.parent.parent / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir), html=True), name="static")
 
 session_manager = SessionManager()
 conv_store = ConversationStore()
@@ -280,19 +286,29 @@ def _get_user_id(x_user_id: str | None = None) -> str:
 
 
 def _extract_sources(query: str) -> list[SourceInfo]:
-    """从 RAG 引擎提取溯源信息。"""
+    """从 RAG 引擎提取溯源信息。ChromaDB 返回的是 L2 距离，这里转换为相关度（1 - 归一化距离）。"""
     try:
+        from pathlib import Path
+
         rag = get_rag_engine()
         if rag.vector_db is None:
             return []
-        docs_with_scores = rag.vector_db.similarity_search_with_score(query, k=3)
+        docs_with_distances = rag.vector_db.similarity_search_with_score(query, k=3)
         sources = []
-        for doc, score in docs_with_scores:
+        for doc, distance in docs_with_distances:
             source_name = doc.metadata.get("source", "unknown")
+            filename = Path(source_name).name if source_name != "unknown" else source_name
+            # L2 距离转相关度：距离越小越相关。heuristic: score = 1 / (1 + sqrt(distance))
+            # 仅当 distance 看上去合理时计算，否则为 None
+            try:
+                d = float(distance)
+                score = round(1.0 / (1.0 + d**0.5), 4) if d >= 0 else None
+            except (TypeError, ValueError):
+                score = None
             sources.append(SourceInfo(
-                document=source_name.split("/")[-1] if "/" in source_name else source_name,
+                document=filename,
                 chunk=doc.page_content[:200],
-                score=round(float(score), 4),
+                score=score,
             ))
         return sources
     except Exception:
